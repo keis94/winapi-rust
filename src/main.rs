@@ -5,11 +5,20 @@ use windows::core::PCSTR;
 use windows::Win32;
 use windows::Win32::System::Registry::{self, RegOpenKeyExA, RegQueryValueExA};
 
+enum RegistryAPIError {
+    WindowsAPIError {
+        api: String,
+        code: windows::core::HRESULT,
+        message: windows::core::HSTRING,
+    },
+    DecodeError,
+}
+
 fn query_registry_value(
     subkey: &str,
     value: &str,
     mut value_type: Registry::REG_VALUE_TYPE,
-) -> Result<String, windows::core::Error> {
+) -> Result<String, RegistryAPIError> {
     // CString must be bound to prevent buffer from being dropped.
     let subkey = CString::new(subkey).ok().unwrap();
     let psubkey = PCSTR::from_raw(subkey.as_ptr() as *const u8);
@@ -28,8 +37,12 @@ fn query_registry_value(
             &mut hkey,
         )
     };
-    if let Err(error) = result.ok() {
-        return Err(error);
+    if let Err(e) = result.ok() {
+        return Err(RegistryAPIError::WindowsAPIError {
+            api: "RegOpenKeyExA".to_owned(),
+            code: e.code(),
+            message: e.message(),
+        });
     }
 
     // Examine data size
@@ -44,8 +57,12 @@ fn query_registry_value(
             Some(&mut lpcbdata),
         )
     };
-    if let Err(error) = result.ok() {
-        return Err(error);
+    if let Err(e) = result.ok() {
+        return Err(RegistryAPIError::WindowsAPIError {
+            api: "RegQueryValueExA".to_owned(),
+            code: e.code(),
+            message: e.message(),
+        });
     }
 
     // Query value
@@ -64,11 +81,21 @@ fn query_registry_value(
         Win32::Foundation::NO_ERROR => {
             let cstr = match CString::from_vec_with_nul(lpdata) {
                 Ok(s) => s,
-                Err(e) => return Err(e),
+                Err(_) => return Err(RegistryAPIError::DecodeError),
             };
-            Ok(cstr.into_string().ok().unwrap())
+            match cstr.into_string() {
+                Ok(s) => Ok(s),
+                Err(_) => Err(RegistryAPIError::DecodeError),
+            }
         }
-        error => Err(error.ok().unwrap_err()),
+        error => {
+            let error = error.ok().unwrap_err();
+            Err(RegistryAPIError::WindowsAPIError {
+                api: "RegQueryValueExA".to_owned(),
+                code: error.code(),
+                message: error.message(),
+            })
+        }
     }
 }
 
@@ -83,8 +110,9 @@ fn main() {
             println!("value: {:?}", value);
             println!("data: {:?}", data);
         }
-        Err(error) => {
-            println!("{} {}", error.code(), error.message())
+        Err(RegistryAPIError::WindowsAPIError { api, code, message }) => {
+            println!("Error on calling {}: {} (code = {})", api, message, code)
         }
+        Err(RegistryAPIError::DecodeError) => println!("Failed to decode registry value"),
     }
 }
