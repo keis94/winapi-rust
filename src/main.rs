@@ -13,10 +13,14 @@ fn query_registry_value(
     mut value_type: Registry::REG_VALUE_TYPE,
 ) -> Result<String> {
     // CString must be bound to prevent buffer from being dropped.
-    let subkey = CString::new(subkey).ok().unwrap();
+    let subkey = CString::new(subkey)
+        .ok()
+        .context("subkey contains null byte")?;
     let psubkey = PCSTR::from_raw(subkey.as_ptr() as *const u8);
 
-    let value = CString::new(value).ok().unwrap();
+    let value = CString::new(value)
+        .ok()
+        .context("value contains null byte")?;
     let pvalue = PCSTR::from_raw(value.as_ptr() as *const u8);
 
     let mut hkey = Registry::HKEY(0);
@@ -68,7 +72,7 @@ fn query_registry_value(
 }
 
 fn main() {
-    let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\";
+    let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     let value = "";
     let value_type = Registry::REG_SZ;
 
