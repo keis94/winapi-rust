@@ -1,17 +1,19 @@
 use std::ffi::CString;
+use std::fmt;
 use std::ptr;
 use windows;
 use windows::core::PCSTR;
 use windows::Win32;
 use windows::Win32::System::Registry::{self, RegOpenKeyExA, RegQueryValueExA};
 
+#[derive(Debug)]
 enum RegistryAPIError {
-    WindowsAPIError {
+    APICallFailed {
         api: String,
         code: windows::core::HRESULT,
         message: windows::core::HSTRING,
     },
-    DecodeError,
+    DecodeFailed,
 }
 
 fn query_registry_value(
@@ -38,7 +40,7 @@ fn query_registry_value(
         )
     };
     if let Err(e) = result.ok() {
-        return Err(RegistryAPIError::WindowsAPIError {
+        return Err(RegistryAPIError::APICallFailed {
             api: "RegOpenKeyExA".to_owned(),
             code: e.code(),
             message: e.message(),
@@ -58,7 +60,7 @@ fn query_registry_value(
         )
     };
     if let Err(e) = result.ok() {
-        return Err(RegistryAPIError::WindowsAPIError {
+        return Err(RegistryAPIError::APICallFailed {
             api: "RegQueryValueExA".to_owned(),
             code: e.code(),
             message: e.message(),
@@ -81,16 +83,16 @@ fn query_registry_value(
         Win32::Foundation::NO_ERROR => {
             let cstr = match CString::from_vec_with_nul(lpdata) {
                 Ok(s) => s,
-                Err(_) => return Err(RegistryAPIError::DecodeError),
+                Err(_) => return Err(RegistryAPIError::DecodeFailed),
             };
             match cstr.into_string() {
                 Ok(s) => Ok(s),
-                Err(_) => Err(RegistryAPIError::DecodeError),
+                Err(_) => Err(RegistryAPIError::DecodeFailed),
             }
         }
         error => {
             let error = error.ok().unwrap_err();
-            Err(RegistryAPIError::WindowsAPIError {
+            Err(RegistryAPIError::APICallFailed {
                 api: "RegQueryValueExA".to_owned(),
                 code: error.code(),
                 message: error.message(),
@@ -110,9 +112,9 @@ fn main() {
             println!("value: {:?}", value);
             println!("data: {:?}", data);
         }
-        Err(RegistryAPIError::WindowsAPIError { api, code, message }) => {
+        Err(RegistryAPIError::APICallFailed { api, code, message }) => {
             println!("Error on calling {}: {} (code = {})", api, message, code)
         }
-        Err(RegistryAPIError::DecodeError) => println!("Failed to decode registry value"),
+        Err(RegistryAPIError::DecodeFailed) => println!("Failed to decode registry value"),
     }
 }
