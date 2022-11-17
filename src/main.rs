@@ -1,78 +1,74 @@
-use std::ffi;
+use std::ffi::CString;
 use std::ptr;
-use windows::core;
+use windows;
+use windows::core::PCSTR;
 use windows::Win32;
 use windows::Win32::System::Registry::{self, RegOpenKeyExA, RegQueryValueExA};
-
-#[no_mangle]
-fn string_to_pcstr(s: &str) -> core::PCSTR {
-    // windows::s! only accepts literal (like "foo", 1), not &'static str.
-    // So manually converting from &str to PCSTR.
-    let s = ffi::CString::new(s).expect("CString::new() failes for &str with null byte.");
-    // pointer to str is no longer managed, so leak here.
-    // It should be freed with CString::from_raw()
-    core::PCSTR::from_raw(s.into_raw() as *const u8)
-}
 
 fn query_registry_value(
     subkey: &str,
     value: &str,
     mut value_type: Registry::REG_VALUE_TYPE,
-) -> Result<String, Win32::Foundation::WIN32_ERROR> {
+) -> Result<String, windows::core::Error> {
+    // CString must be bound to prevent buffer from being dropped.
+    let subkey = CString::new(subkey).ok().unwrap();
+    let psubkey = PCSTR::from_raw(subkey.as_ptr() as *const u8);
+
+    let value = CString::new(value).ok().unwrap();
+    let pvalue = PCSTR::from_raw(value.as_ptr() as *const u8);
+
     let mut hkey = Registry::HKEY(0);
 
-    unsafe {
-        let result = RegOpenKeyExA(
+    let result = unsafe {
+        RegOpenKeyExA(
             Registry::HKEY_CURRENT_USER,
-            string_to_pcstr(subkey),
+            psubkey,
             0,
             Registry::KEY_QUERY_VALUE,
             &mut hkey,
-        );
-        if let Err(error) = result.ok() {
-            panic!(
-                "Failed to call RegOpenKeyExA. Error Code = {}: {}",
-                error.code(),
-                error.message()
-            )
-        }
+        )
+    };
+    if let Err(error) = result.ok() {
+        return Err(error);
+    }
 
-        // Examine data size
-        let mut lpcbdata: u32 = 0;
-        let result = RegQueryValueExA(
+    // Examine data size
+    let mut lpcbdata: u32 = 0;
+    let result = unsafe {
+        RegQueryValueExA(
             hkey,
-            string_to_pcstr(value),
+            pvalue,
             Some(ptr::null_mut()),
             Some(&mut value_type),
             None,
             Some(&mut lpcbdata),
-        );
-        if let Err(error) = result.ok() {
-            panic!(
-                "Failed to call RegQueryValueExA. Error Code = {}: {}",
-                error.code(),
-                error.message()
-            )
-        }
+        )
+    };
+    if let Err(error) = result.ok() {
+        return Err(error);
+    }
 
-        // Query value
-        let mut lpdata = vec![0; lpcbdata as usize];
-        let result = RegQueryValueExA(
+    // Query value
+    let mut lpdata = vec![0; lpcbdata as usize];
+    let result = unsafe {
+        RegQueryValueExA(
             hkey,
-            string_to_pcstr(value),
+            pvalue,
             Some(ptr::null_mut()),
             Some(&mut value_type),
             Some(lpdata.as_mut_ptr()),
             Some(&mut lpcbdata),
-        );
-        match result {
-            Win32::Foundation::NO_ERROR => {
-                return Ok(String::from_utf8(lpdata).unwrap());
-            }
-            error => {
-                return Err(error);
-            }
+        )
+    };
+    match result {
+        Win32::Foundation::NO_ERROR => {
+            let cstr = match CString::from_vec_with_nul(lpdata) {
+                Ok(s) => s,
+                Err(e) => return Err(e),
+            };
+            Ok(cstr.into_string().ok().unwrap())
         }
+        error => Err(error.ok().unwrap_err()),
     }
 }
 
@@ -82,14 +78,13 @@ fn main() {
     let value_type = Registry::REG_SZ;
 
     match query_registry_value(subkey, value, value_type) {
-        Ok(d) => {
-            println!("subkey: {}", subkey);
-            println!("value: {}", value);
-            println!("data: {}", d);
+        Ok(data) => {
+            println!("subkey: {:?}", subkey);
+            println!("value: {:?}", value);
+            println!("data: {:?}", data);
         }
-        Err(e) => {
-            let e = e.ok().unwrap_err();
-            println!("{} {}", e.code(), e.message())
+        Err(error) => {
+            println!("{} {}", error.code(), error.message())
         }
     }
 }
