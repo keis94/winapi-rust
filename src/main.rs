@@ -27,7 +27,7 @@ fn write_file(path: &str, buf: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn read_eventlog() -> Result<()> {
+fn extract_powershell_activity_from_event_log() -> Result<()> {
     let path = PathBuf::from(".\\powershell.evtx");
     let mut parser = EvtxParser::from_path(path)?;
     let powershell_event = parser
@@ -126,7 +126,7 @@ fn main() {
     }
 
     // Extracting Powershell event log (only Event ID = 400) from .evtx file
-    if let Err(e) = read_eventlog() {
+    if let Err(e) = extract_powershell_activity_from_event_log() {
         eprintln!("{:?}", e)
     }
 }
