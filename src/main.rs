@@ -1,11 +1,49 @@
-use anyhow::anyhow;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use evtx::{EvtxParser, SerializedEvtxRecord};
+use serde_json::Value;
 use std::ffi::CString;
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::ptr;
-use windows;
 use windows::core::PCSTR;
 use windows::Win32;
 use windows::Win32::System::Registry::{self, RegOpenKeyExA, RegQueryValueExA};
+
+fn pick_event_id(event: &SerializedEvtxRecord<Value>) -> i64 {
+    event
+        .data
+        .get("Event")
+        .and_then(|e| e.get("System"))
+        .and_then(|e| e.get("EventID"))
+        .and_then(|e| e.get("#text"))
+        .and_then(|e| e.as_i64())
+        .unwrap_or(-1)
+}
+
+fn write_file(path: &str, buf: &[u8]) -> Result<()> {
+    BufWriter::new(File::create(Path::new(path))?).write_all(buf)?;
+
+    Ok(())
+}
+
+fn read_eventlog() -> Result<()> {
+    let path = PathBuf::from(".\\powershell.evtx");
+    let mut parser = EvtxParser::from_path(path)?;
+    let powershell_event = parser
+        .records_json_value()
+        .filter_map(|e| e.ok())
+        .filter(|e| pick_event_id(e) == 400)
+        .map(|e| e.data)
+        .collect::<Vec<Value>>();
+
+    write_file(
+        "./powershell.log",
+        serde_json::to_string_pretty(&powershell_event)?.as_bytes(),
+    )?;
+
+    Ok(())
+}
 
 fn query_registry_value(
     subkey: &str,
@@ -72,6 +110,7 @@ fn query_registry_value(
 }
 
 fn main() {
+    // Reading registry data
     let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     let value = "";
     let value_type = Registry::REG_SZ;
@@ -84,5 +123,10 @@ fn main() {
             println!("data: {:?}", data);
         }
         Err(e) => println!("{:?}", e),
+    }
+
+    // Extracting Powershell event log (only Event ID = 400) from .evtx file
+    if let Err(e) = read_eventlog() {
+        eprintln!("{:?}", e)
     }
 }
